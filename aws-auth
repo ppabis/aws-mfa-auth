@@ -19,9 +19,9 @@ while IFS= read -r line; do
 
     ## First: if line is the profile entry (`[]`), finish this routine and append the
     ## new entry to the list. Also reset the variables.
-    if (echo "$line" | grep -Pq '^\[.*\]'); then
+    if (echo "$line" | grep -Eq '^\[.*\]'); then
       
-      CURRENT_ENTRY_PROFILE=$(echo "$line" | grep -oP '\[.*\]' | tr -d '[]')
+      CURRENT_ENTRY_PROFILE=$(echo "$line" | grep -oE '\[.*\]' | tr -d '[]')
       ## If the label was not specified, just use the profile name.
       [[ "$CURRENT_ENTRY_LABEL" == "" ]] && CURRENT_ENTRY_LABEL=$CURRENT_ENTRY_PROFILE
 
@@ -40,16 +40,16 @@ while IFS= read -r line; do
       CURRENT_ENTRY_PROFILE=""
 
     ## Match only lines starting with # @MFA: or # @Label: and extract the values
-    elif (echo "$line" | grep -Pq '^#\s*@MFA:.*'); then
-      CURRENT_ENTRY_MFA=$(echo "$line" | grep -oP '@MFA:.*\s*' | cut -d':' -f2- | tr -d ' ')
-    elif (echo "$line" | grep -Pq '^#\s*@Label:.*'); then
-      CURRENT_ENTRY_LABEL=$(echo "$line" | grep -oP '@Label:.*' | cut -d':' -f2- | tr -d ' ')
+    elif (echo "$line" | grep -Eq '^#\s*@MFA:.*'); then
+      CURRENT_ENTRY_MFA=$(echo "$line" | grep -oE '@MFA:.*\s*' | cut -d':' -f2- | tr -d ' ')
+    elif (echo "$line" | grep -Eq '^#\s*@Label:.*'); then
+      CURRENT_ENTRY_LABEL=$(echo "$line" | grep -oE '@Label:.*' | cut -d':' -f2- | tr -d ' ')
     fi
 
   else
     
     ## We are not parsing so continue searching the lines for the auth entry marker
-    if (echo "$line" | grep -Pq '^#\s*@AuthEntry'); then
+    if (echo "$line" | grep -Eq '^#\s*@AuthEntry'); then
       ## We found @AuthEntry
       AUTH_ENTRY_MARKER=1
     fi
