@@ -1,0 +1,107 @@
+#!/bin/bash
+### Easy MFA for AWS CLI - version 2.0
+
+LIST=()
+MFAS=()
+PROFILES=()
+
+AUTH_ENTRY_MARKER=0         # Parsing on/off
+AUTH_ENTRIES=0              # Number of entries found
+CURRENT_ENTRY_LABEL=""      # Label of the entry
+CURRENT_ENTRY_MFA=""        # MFA ARN of the entry
+CURRENT_ENTRY_PROFILE=""    # Profile name of the entry
+
+### The parsing logic
+while IFS= read -r line; do
+  if [[ $AUTH_ENTRY_MARKER -eq 1 ]]; then
+    ## We are in a parsing mode
+    ## Logic to handle single entry
+
+    ## First: if line is the profile entry (`[]`), finish this routine and append the
+    ## new entry to the list. Also reset the variables.
+    if (echo "$line" | grep -Eq '^\[.*\]'); then
+      
+      CURRENT_ENTRY_PROFILE=$(echo "$line" | grep -oE '\[.*\]' | tr -d '[]')
+      ## If the label was not specified, just use the profile name.
+      [[ "$CURRENT_ENTRY_LABEL" == "" ]] && CURRENT_ENTRY_LABEL=$CURRENT_ENTRY_PROFILE
+
+      ## Append the entry to the list only if it has a MFA
+      if [[ "$CURRENT_ENTRY_MFA" != "" ]]; then
+        LIST+=($AUTH_ENTRIES $CURRENT_ENTRY_LABEL)
+        MFAS+=($CURRENT_ENTRY_MFA)
+        PROFILES+=($CURRENT_ENTRY_PROFILE)
+        AUTH_ENTRIES=$((AUTH_ENTRIES+1))
+      fi
+      
+      ## Reset all the values
+      AUTH_ENTRY_MARKER=0
+      CURRENT_ENTRY_LABEL=""
+      CURRENT_ENTRY_MFA=""
+      CURRENT_ENTRY_PROFILE=""
+
+    ## Match only lines starting with # @MFA: or # @Label: and extract the values
+    elif (echo "$line" | grep -Eq '^#\s*@MFA:.*'); then
+      CURRENT_ENTRY_MFA=$(echo "$line" | grep -oE '@MFA:.*\s*' | cut -d':' -f2- | tr -d ' ')
+    elif (echo "$line" | grep -Eq '^#\s*@Label:.*'); then
+      CURRENT_ENTRY_LABEL=$(echo "$line" | grep -oE '@Label:.*' | cut -d':' -f2- | tr -d ' ')
+    fi
+
+  else
+    
+    ## We are not parsing so continue searching the lines for the auth entry marker
+    if (echo "$line" | grep -Eq '^#\s*@AuthEntry'); then
+      ## We found @AuthEntry
+      AUTH_ENTRY_MARKER=1
+    fi
+  fi
+done < ~/.aws/credentials
+
+# Dialog to select the profile
+SELECTION=$(\
+ dialog --no-tags\
+ --menu "Profile:"\
+ 11 30 3\
+ ${LIST[@]}\
+ 3>&1 1>&2 2>&3 3>&-\
+)
+
+if [[ $? -ne 0 ]]; then
+  echo "Canceled"
+  exit 1
+fi
+
+PROFILE=${PROFILES[$SELECTION]}
+MFA=${MFAS[$SELECTION]}
+
+# Dialog to input the MFA code
+MFACODE=$(\
+ dialog --inputbox "Enter MFA code: "\
+ 8 20\
+ 3>&1 1>&2 2>&3 3>&-\
+)
+
+if [[ $? -ne 0 ]] || [[ "$MFACODE" == "" ]]; then
+  echo "Canceled"
+  exit 1
+fi
+
+# Get temporary credentials
+JSON_ACCESS_KEY="$(aws sts get-session-token\
+ --serial-number $MFA\
+ --token-code $MFACODE\
+ --profile $PROFILE\
+)"
+ 
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' <<< $JSON_ACCESS_KEY)
+export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' <<< $JSON_ACCESS_KEY)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' <<< $JSON_ACCESS_KEY)
+
+# Print logged-in user details using STS
+CURRENT_USER="$(aws sts get-caller-identity)"
+USER_NAME=$(jq -r '.Arn' <<< $CURRENT_USER | cut -d/ -f2)
+ACCOUNT_ID=$(jq -r '.Account' <<< $CURRENT_USER)
+if [[ "$USER_NAME" == "" ]]; then
+  echo "❌ Login failed"
+  exit 1
+fi
+echo "✅ Logged in as $USER_NAME @ $ACCOUNT_ID"
